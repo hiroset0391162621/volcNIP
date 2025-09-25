@@ -1,3 +1,23 @@
+"""
+NIP解析プログラム - 図のアスペクト比柔軟変更対応版（subplot + tight_layout版）
+
+このプログラムでは、plt.subplotとplt.tight_layout()を使用することで：
+1. 図のアスペクト比を柔軟に変更可能
+2. サブプロットがはみ出ない自動レイアウト調整
+3. どのようなアスペクト比でも適切に表示される
+
+plt.axesの固定座標ではなく、GridSpecを使用した相対的なレイアウトにより、
+図のサイズが変わってもレイアウトが自動調整されます。
+
+アスペクト比の例:
+- デフォルト（縦長）: figsize = (6, 8)
+- 正方形: figsize = (8, 8) 
+- 横長: figsize = (12, 6)
+- より大きな図: figsize = (10, 12)
+- コンパクト: figsize = (4, 6)
+- 超横長: figsize = (16, 4)
+"""
+
 import sys
 import datetime
 import numpy as np
@@ -5,6 +25,7 @@ import obspy
 from obspy.core import UTCDateTime
 import matplotlib.pyplot as plt
 from matplotlib.ticker import *
+from matplotlib.gridspec import GridSpec
 import warnings
 warnings.simplefilter('ignore') 
 sys.path.append(sys.path.append("nipfilter/"))
@@ -100,8 +121,125 @@ def apply_gmt_style_to_axis(ax: Any, grid: bool = True, minor_ticks: bool = True
     return ax
 
 
+def create_nip_plot(tr_Z, tr_N, tr_E, Tv, Fv, Sv, nip, nip_mean, nip_eightyper, 
+                   windL, figsize=(6, 8), save_path="example", 
+                   cbar_width_ratio: float = 0.5, main_width_ratio: float = 6.0):
+    """
+    NIP解析結果をプロットする関数 - subplot版（アスペクト比変更に対応）
+    
+    Args:
+        tr_Z, tr_N, tr_E: 地震波形データ
+        Tv, Fv: 時間・周波数軸
+        Sv: 垂直成分のStockwell変換結果
+        nip: NIP値
+        nip_mean: NIP平均値
+        nip_eightyper: NIP 80パーセンタイル値
+        windL: 時間窓長
+        figsize: 図のサイズ (width, height) のタプル
+        save_path: 保存ファイル名のプレフィックス
+        cbar_width_ratio: カラーバーの幅比率（デフォルトは0.5）
+        main_width_ratio: メインプロットの幅比率（デフォルトは6.0）
+    
+    Returns:
+        fig: matplotlib figure オブジェクト
+    """
+    import matplotlib as mpl
+    
+    # subplotを使用してレイアウトを自動調整
+    fig = plt.figure(figsize=figsize)
+    
+    # GridSpecを使用してより柔軟なレイアウト
+    # カラーバーを細くし、左右マージンを増やしてラベルがはみ出ないようにする
+    # width比率はユーザー指定。極端な値はクリップ
+    main_width_ratio = max(main_width_ratio, 1.0)
+    cbar_width_ratio = max(min(cbar_width_ratio, main_width_ratio), 0.1)
+    gs = fig.add_gridspec(4, 2,
+                          height_ratios=[1, 1.5, 1.5, 1],
+                          width_ratios=[main_width_ratio, cbar_width_ratio],
+                          hspace=0.35, wspace=0.15,
+                          left=0.15, right=0.82)  # 縦書きラベル用により右マージンを確保
+    
+    # 1. 波形プロット（上段全体）
+    ax1 = fig.add_subplot(gs[0, 0])
+    trace_amp = 1.5*np.max(np.abs(tr_Z))
+    ax1.plot(np.linspace(0, windL, len(tr_Z)), tr_Z, lw=1, color='k')
+    ax1.annotate('Z (raw)', xy=(0.05, 0.95), xycoords='axes fraction', fontsize=12,
+                horizontalalignment='left', verticalalignment='top')
+    ax1.set_xlim(0, windL)
+    ax1.set_ylim(-trace_amp, trace_amp)
+    ax1.set_ylabel('Amplitude', fontsize=14)
+    ax1.set_xlabel('lapse time [s]', fontsize=14)  # x軸ラベルを表示
+    
+    # 2. Stockwell変換結果プロット（中段左）
+    ax2 = fig.add_subplot(gs[1, 0])
+    SC1 = ax2.pcolormesh(Tv, Fv, np.abs(Sv), cmap=plt.cm.jet, rasterized=True)
+    ax2.set_xlim(0, windL)
+    ax2.set_ylim(0.05, 10)
+    ax2.set_yscale('log')
+    ax2.set_ylabel('Frequency [Hz]', fontsize=14)
+    ax2.set_xlabel('lapse time [s]', fontsize=14)  # x軸ラベルを表示
+    
+    # 3. Stockwell変換のカラーバー（中段右）- 細くて見やすく
+    ax2_cbar = fig.add_subplot(gs[1, 1])
+    cbar1 = plt.colorbar(SC1, cax=ax2_cbar, orientation='vertical')
+    # 従来通り横向き（縦書き）ラベル
+    cbar1.set_label(r'$|S_v(\tau, f)|$ [m/s]', fontsize=12, labelpad=15)
+    cbar1.ax.tick_params(labelsize=10)
+    
+    # 4. NIPプロット（中下段左）
+    ax3 = fig.add_subplot(gs[2, 0])
+    cmap = plt.cm.bwr
+    cmaplist = [cmap(i) for i in range(cmap.N)]
+    cmap = mpl.colors.LinearSegmentedColormap.from_list(
+        'Custom cmap', cmaplist, cmap.N)
+    bounds = np.arange(-1, 1.25, 0.25) 
+    norm = mpl.colors.BoundaryNorm(bounds, cmap.N)
+    SC2 = ax3.pcolormesh(Tv, Fv, nip, cmap=cmap, norm=norm, rasterized=True)
+    ax3.set_xlim(0, windL)
+    ax3.set_ylim(0.05, 10)
+    ax3.set_yscale('log')
+    ax3.set_xlabel('lapse time [s]', fontsize=14)
+    ax3.set_ylabel('Frequency [Hz]', fontsize=14)
+    
+    # 5. NIPカラーバー（中下段右）- 細くて見やすく
+    ax3_cbar = fig.add_subplot(gs[2, 1])
+    cbar2 = plt.colorbar(SC2, cax=ax3_cbar, orientation='vertical', 
+                         ticks=np.arange(-1, 1.25, 0.25))
+    # 従来通り横向き（縦書き）ラベル
+    cbar2.set_label('NIP', fontsize=12, labelpad=15)
+    cbar2.ax.tick_params(labelsize=10)
+    
+    # 6. NIP統計プロット（下段左）
+    ax4 = fig.add_subplot(gs[3, 0])
+    ax4.plot(nip_mean, Fv[:,0], lw=1.5, ls='--', color='C0', label='NIP (mean)', zorder=2)
+    ax4.plot(nip_eightyper, Fv[:,0], lw=1.5, color='C1', label='NIP (80th percentile)', zorder=2)
+    ax4.set_ylim(0.05, 10)
+    ax4.set_yscale('log')
+    ax4.set_xlabel('NIP', fontsize=14)
+    ax4.set_ylabel('Frequency [Hz]', fontsize=14)
+    ax4.legend(fontsize=12, loc='upper right')
+    ax4.set_xlim(-1, 1)
+    
+    # GMT スタイル適用
+    ax1 = apply_gmt_style_to_axis(ax1, grid=False, minor_ticks=True)
+    ax2 = apply_gmt_style_to_axis(ax2, grid=True, minor_ticks=True)
+    ax3 = apply_gmt_style_to_axis(ax3, grid=False, minor_ticks=True)
+    ax4 = apply_gmt_style_to_axis(ax4, grid=True, minor_ticks=True)
+    
+    # レイアウトの自動調整 - ylabelがはみ出ないよう調整
+    plt.tight_layout(pad=1.5)  # パディングを追加してラベルの余裕を確保
+    
+    # 図の保存
+    plt.savefig(f"{save_path}.pdf", dpi=300, bbox_inches='tight')
+    plt.savefig(f"{save_path}.png", dpi=300, bbox_inches='tight')
+    
+    return fig
+
 
 if __name__ == '__main__':
+
+    
+    FIGURE_SIZE = (5, 14)    
 
     polarization = 'retrograde'
     Fs = 20.0 ### sampling frequency [Hz]
@@ -150,103 +288,12 @@ if __name__ == '__main__':
     nip_eightyper = np.percentile(nip, 80, axis=1) ### 80% percentile over time
 
     """
-    Plot
+    Plot - 図のアスペクト比を柔軟に変更可能
     """
-    # 図のアスペクト比を柔軟に変更できるように設定
-    # デフォルトは (width=6, height=8) だが、必要に応じて変更可能
-    figure_width = 6    # 図の幅 [インチ]
-    figure_height = 8   # 図の高さ [インチ]
-    figsize = (figure_width, figure_height)
-    
-    x_lim = 0.12
-    fig = plt.figure(figsize=figsize) 
-    ax1 = plt.axes([x_lim,0.82,0.68,0.15])
-    trace_amp = 1.5*np.max(np.abs(tr_Z))
-    ax1.plot(np.linspace(0,windL, len(tr_Z)), tr_Z, lw=1, color='k')
-    ax1.annotate('Z (raw)', xy=(0.05, 0.95), xycoords='axes fraction', fontsize=12,
-                horizontalalignment='left', verticalalignment='top')
-    ax1.set_xlim(0,windL)
-    ax1.set_ylim(-trace_amp, trace_amp)
-    ax1.set_ylabel('', fontsize=14)
-
-    ax11 = plt.axes([0.9,0.82,0.1,0.2])
-    plt.xticks(())
-    plt.yticks(())
-    ax11.spines['right'].set_color('none')
-    ax11.spines['left'].set_color('none')
-    ax11.spines['top'].set_color('none')
-    ax11.spines['bottom'].set_color('none')   
-    ax11.patch.set_alpha(0.)
-
-
-
-    ax5 = plt.axes([x_lim,0.55,0.85,0.2])
-    SC = ax5.pcolormesh(Tv, Fv, np.abs(Sv), cmap=plt.cm.jet, rasterized=True)
-    ax5.set_xlim(0,windL)
-    ax5.set_ylim(0.05,10)
-    ax5.set_yscale('log')
-    ax5.set_ylabel('Frequency [Hz]', fontsize=14)
-
-    ax6 = plt.axes([0.9,0.55,0.1,0.2])
-    plt.xticks(())
-    plt.yticks(())
-    ax6.spines['right'].set_color('none')
-    ax6.spines['left'].set_color('none')
-    ax6.spines['top'].set_color('none')
-    ax6.spines['bottom'].set_color('none')   
-    ax6.patch.set_alpha(0.)
-    cbar=plt.colorbar(SC, pad=0.05, orientation='vertical')
-    cbar.set_label(r'$|S_v(\tau, f)|$ [m/s]', fontsize=14)
-    cbar.ax.tick_params(labelsize=12)
-
-
-    ax3 = plt.axes([x_lim,0.3,0.85,0.2])      
-    import matplotlib as mpl
-    cmap = plt.cm.bwr
-    cmaplist = [cmap(i) for i in range(cmap.N)]
-    cmap = mpl.colors.LinearSegmentedColormap.from_list(
-        'Custom cmap', cmaplist, cmap.N)
-    bounds = np.arange(-1, 1.25, 0.25) 
-    norm = mpl.colors.BoundaryNorm(bounds, cmap.N)
-    SC = ax3.pcolormesh(Tv, Fv, nip, cmap=cmap, norm=norm, rasterized=True)
-
-
-    ax3.set_xlim(0,windL)
-    ax3.set_ylim(0.05,10)
-    ax3.set_yscale('log')
-    ax3.set_xlabel('lapse time [s]', fontsize=14)
-    ax3.set_ylabel('Frequency [Hz]', fontsize=14)
-
-    ax4 = plt.axes([0.9,0.3,0.1,0.2])
-    #ax4.xaxis.set_major_formatter(FormatStrFormatter("%.2f"))
-    plt.xticks(())
-    plt.yticks(())
-    ax4.spines['right'].set_color('none')
-    ax4.spines['left'].set_color('none')
-    ax4.spines['top'].set_color('none')
-    ax4.spines['bottom'].set_color('none')   
-    ax4.patch.set_alpha(0.)
-    cbar=plt.colorbar(SC, pad=0.05, orientation='vertical', ticks=np.arange(-1, 1.25, 0.25))
-    cbar.set_label('NIP', fontsize=14)
-    cbar.ax.tick_params(labelsize=12)
+    # 上で設定したFIGURE_SIZEを使用して図を作成
+    fig = create_nip_plot(tr_Z, tr_N, tr_E, Tv, Fv, Sv, nip, nip_mean, nip_eightyper, windL, figsize=FIGURE_SIZE, save_path="example", cbar_width_ratio=0.3, main_width_ratio=7.0)
     
     
-    ax7 = plt.axes([x_lim,0.07,0.3,0.15])   
-    ax7.plot(nip_mean, Fv[:,0], lw=1.5, ls='--', color='C0', label='NIP (mean)', zorder=2)
-    ax7.plot(nip_eightyper, Fv[:,0], lw=1.5, color='C1', label='NIP (80th percentile)', zorder=2)
-    ax7.set_ylim(0.05,10)
-    ax7.set_yscale('log')
-    ax7.set_xlabel('NIP', fontsize=14)
-    ax7.set_ylabel('Frequency [Hz]', fontsize=14)
-    ax7.legend(fontsize=14, bbox_to_anchor=(1.05, 1), loc='upper left', borderaxespad=0, )
-    ax7.set_xlim(-1,1)
-    
-    
-    ax1 = apply_gmt_style_to_axis(ax1, grid=False, minor_ticks=True)
-    ax3 = apply_gmt_style_to_axis(ax3, grid=False, minor_ticks=True)
-    ax5 = apply_gmt_style_to_axis(ax5, grid=True, minor_ticks=True)
-    ax7 = apply_gmt_style_to_axis(ax7, grid=True, minor_ticks=True)
-
-    plt.savefig("example.pdf", dpi=300, bbox_inches='tight')
-    plt.savefig("example.png", dpi=300, bbox_inches='tight')
     plt.show()
+    
+    
