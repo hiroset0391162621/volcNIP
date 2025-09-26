@@ -226,8 +226,8 @@ def create_nip_plot(tr_Z, tr_N, tr_E, Tv, Fv, Sv, nip, nip_mean, nip_eightyper,
         plt.tight_layout(pad=pad)
     
     # Save figure
-    # plt.savefig(f"{save_path}.pdf", dpi=300, bbox_inches='tight')
-    # plt.savefig(f"{save_path}.png", dpi=300, bbox_inches='tight')
+    plt.savefig(f"{save_path}.pdf", dpi=300, bbox_inches='tight')
+    plt.savefig(f"{save_path}.png", dpi=300, bbox_inches='tight')
     
     return fig
 
@@ -274,7 +274,7 @@ if __name__ == '__main__':
     Sr, St = filt_par.rotate_NE_RT(Sn, Se, azimuth)
     
     """
-    Shift vertical component and Calculate NIP(t,f)
+    Calculate NIP(t,f)
     """
     nip = filt_par.NIP(Sr, Sv, polarization=polarization, eps=None)
     nip_mean = np.nanmean(nip, axis=1)  # average over time
