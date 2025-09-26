@@ -1,22 +1,3 @@
-"""
-NIP解析プログラム - 図のアスペクト比柔軟変更対応版（subplot + tight_layout版）
-
-このプログラムでは、plt.subplotとplt.tight_layout()を使用することで：
-1. 図のアスペクト比を柔軟に変更可能
-2. サブプロットがはみ出ない自動レイアウト調整
-3. どのようなアスペクト比でも適切に表示される
-
-plt.axesの固定座標ではなく、GridSpecを使用した相対的なレイアウトにより、
-図のサイズが変わってもレイアウトが自動調整されます。
-
-アスペクト比の例:
-- デフォルト（縦長）: figsize = (6, 8)
-- 正方形: figsize = (8, 8) 
-- 横長: figsize = (12, 6)
-- より大きな図: figsize = (10, 12)
-- コンパクト: figsize = (4, 6)
-- 超横長: figsize = (16, 4)
-"""
 
 import sys
 import datetime
@@ -121,45 +102,57 @@ def apply_gmt_style_to_axis(ax: Any, grid: bool = True, minor_ticks: bool = True
     return ax
 
 
-def create_nip_plot(tr_Z, tr_N, tr_E, Tv, Fv, Sv, nip, nip_mean, nip_eightyper, 
-                   windL, figsize=(6, 8), save_path="example", 
-                   cbar_width_ratio: float = 0.5, main_width_ratio: float = 6.0):
+def create_nip_plot(tr_Z, tr_N, tr_E, Tv, Fv, Sv, nip, nip_mean, nip_eightyper,
+                windL, figsize=(6, 8), save_path="example",
+                cbar_width_ratio: float = 0.5, main_width_ratio: float = 6.0,
+                hspace: float | None = None, wspace: float = 0.15,
+                constrained: bool = False):
     """
-    NIP解析結果をプロットする関数 - subplot版（アスペクト比変更に対応）
-    
+    Plot NIP analysis results (subplot layout, aspect-ratio flexible).
+
     Args:
-        tr_Z, tr_N, tr_E: 地震波形データ
-        Tv, Fv: 時間・周波数軸
-        Sv: 垂直成分のStockwell変換結果
-        nip: NIP値
-        nip_mean: NIP平均値
-        nip_eightyper: NIP 80パーセンタイル値
-        windL: 時間窓長
-        figsize: 図のサイズ (width, height) のタプル
-        save_path: 保存ファイル名のプレフィックス
-        cbar_width_ratio: カラーバーの幅比率（デフォルトは0.5）
-        main_width_ratio: メインプロットの幅比率（デフォルトは6.0）
-    
+        tr_Z, tr_N, tr_E: Waveform arrays (vertical, north, east) in SI units.
+        Tv, Fv: Time and frequency coordinate arrays from Stockwell transform.
+        Sv: Stockwell transform (vertical component) complex values.
+        nip: 2-D NIP values (frequency x time).
+        nip_mean: Mean NIP over time (frequency vector).
+        nip_eightyper: 80th percentile of NIP over time (frequency vector).
+        windL: Time window length (seconds).
+        figsize: Tuple (width, height) in inches for the figure size.
+        save_path: Output filename prefix (without extension).
+        cbar_width_ratio: Width ratio for colorbar column (default 0.5).
+        main_width_ratio: Width ratio for main plot column (default 6.0).
+
     Returns:
-        fig: matplotlib figure オブジェクト
+        fig: Matplotlib Figure instance.
     """
     import matplotlib as mpl
     
-    # subplotを使用してレイアウトを自動調整
-    fig = plt.figure(figsize=figsize)
+    # Create figure (optionally enable constrained layout)
+    fig = plt.figure(figsize=figsize, constrained_layout=constrained)
     
-    # GridSpecを使用してより柔軟なレイアウト
-    # カラーバーを細くし、左右マージンを増やしてラベルがはみ出ないようにする
-    # width比率はユーザー指定。極端な値はクリップ
+    # Flexible GridSpec. Narrow colorbars & controlled margins.
+    # Clip extreme width settings provided by user.
     main_width_ratio = max(main_width_ratio, 1.0)
     cbar_width_ratio = max(min(cbar_width_ratio, main_width_ratio), 0.1)
-    gs = fig.add_gridspec(4, 2,
-                          height_ratios=[1, 1.5, 1.5, 1],
-                          width_ratios=[main_width_ratio, cbar_width_ratio],
-                          hspace=0.35, wspace=0.15,
-                          left=0.15, right=0.82)  # 縦書きラベル用により右マージンを確保
-    
-    # 1. 波形プロット（上段全体）
+
+    # Adaptive vertical spacing if not explicitly provided
+    if hspace is None:
+        # Increase spacing automatically for shorter figures to avoid overlap
+        ref_height = 12.0  # reference height (inches)
+        base_hspace = 0.35
+        scale = ref_height / max(figsize[1], 1e-6)
+        hspace = min(0.6, max(0.28, base_hspace * scale))
+
+    gs = fig.add_gridspec(
+        4, 2,
+        height_ratios=[1, 1.5, 1.5, 1],
+        width_ratios=[main_width_ratio, cbar_width_ratio],
+        hspace=hspace,
+        wspace=wspace,
+        left=0.15, right=0.82
+    )
+    # 1. Raw vertical waveform (top row)
     ax1 = fig.add_subplot(gs[0, 0])
     trace_amp = 1.5*np.max(np.abs(tr_Z))
     ax1.plot(np.linspace(0, windL, len(tr_Z)), tr_Z, lw=1, color='k')
@@ -168,25 +161,25 @@ def create_nip_plot(tr_Z, tr_N, tr_E, Tv, Fv, Sv, nip, nip_mean, nip_eightyper,
     ax1.set_xlim(0, windL)
     ax1.set_ylim(-trace_amp, trace_amp)
     ax1.set_ylabel('Amplitude', fontsize=14)
-    ax1.set_xlabel('lapse time [s]', fontsize=14)  # x軸ラベルを表示
+    ax1.set_xlabel('lapse time [s]', fontsize=14)
     
-    # 2. Stockwell変換結果プロット（中段左）
+    # 2. Stockwell transform amplitude (middle row)
     ax2 = fig.add_subplot(gs[1, 0])
     SC1 = ax2.pcolormesh(Tv, Fv, np.abs(Sv), cmap=plt.cm.jet, rasterized=True)
     ax2.set_xlim(0, windL)
     ax2.set_ylim(0.05, 10)
     ax2.set_yscale('log')
     ax2.set_ylabel('Frequency [Hz]', fontsize=14)
-    ax2.set_xlabel('lapse time [s]', fontsize=14)  # x軸ラベルを表示
+    ax2.set_xlabel('lapse time [s]', fontsize=14)
     
-    # 3. Stockwell変換のカラーバー（中段右）- 細くて見やすく
+    # 3. Colorbar for Stockwell amplitude
     ax2_cbar = fig.add_subplot(gs[1, 1])
     cbar1 = plt.colorbar(SC1, cax=ax2_cbar, orientation='vertical')
-    # 従来通り横向き（縦書き）ラベル
+    # Vertical label
     cbar1.set_label(r'$|S_v(\tau, f)|$ [m/s]', fontsize=12, labelpad=15)
     cbar1.ax.tick_params(labelsize=10)
     
-    # 4. NIPプロット（中下段左）
+    # 4. NIP time-frequency image
     ax3 = fig.add_subplot(gs[2, 0])
     cmap = plt.cm.bwr
     cmaplist = [cmap(i) for i in range(cmap.N)]
@@ -201,37 +194,40 @@ def create_nip_plot(tr_Z, tr_N, tr_E, Tv, Fv, Sv, nip, nip_mean, nip_eightyper,
     ax3.set_xlabel('lapse time [s]', fontsize=14)
     ax3.set_ylabel('Frequency [Hz]', fontsize=14)
     
-    # 5. NIPカラーバー（中下段右）- 細くて見やすく
+    # 5. Colorbar for NIP
     ax3_cbar = fig.add_subplot(gs[2, 1])
     cbar2 = plt.colorbar(SC2, cax=ax3_cbar, orientation='vertical', 
-                         ticks=np.arange(-1, 1.25, 0.25))
-    # 従来通り横向き（縦書き）ラベル
+                        ticks=np.arange(-1, 1.25, 0.25))
+    # Vertical label
     cbar2.set_label('NIP', fontsize=12, labelpad=15)
     cbar2.ax.tick_params(labelsize=10)
     
-    # 6. NIP統計プロット（下段左）
+    # 6. NIP summary statistics (mean & 80th percentile)
     ax4 = fig.add_subplot(gs[3, 0])
-    ax4.plot(nip_mean, Fv[:,0], lw=1.5, ls='--', color='C0', label='NIP (mean)', zorder=2)
-    ax4.plot(nip_eightyper, Fv[:,0], lw=1.5, color='C1', label='NIP (80th percentile)', zorder=2)
+    ax4.plot(nip_mean, Fv[:,0], lw=1.5, ls='--', color='C0', label='mean', zorder=2)
+    ax4.plot(nip_eightyper, Fv[:,0], lw=1.5, color='C1', label='80th percentile', zorder=2)
     ax4.set_ylim(0.05, 10)
     ax4.set_yscale('log')
     ax4.set_xlabel('NIP', fontsize=14)
     ax4.set_ylabel('Frequency [Hz]', fontsize=14)
-    ax4.legend(fontsize=12, loc='upper right')
+    # Legend with shorter sample line (handlelength) and tighter spacing
+    ax4.legend(bbox_to_anchor=(1.02, 1), loc='upper left', borderaxespad=0,fontsize=12, handlelength=0.9, handletextpad=0.5, borderpad=0.3)
     ax4.set_xlim(-1, 1)
     
-    # GMT スタイル適用
+    # Apply GMT-like styling
     ax1 = apply_gmt_style_to_axis(ax1, grid=False, minor_ticks=True)
     ax2 = apply_gmt_style_to_axis(ax2, grid=True, minor_ticks=True)
     ax3 = apply_gmt_style_to_axis(ax3, grid=False, minor_ticks=True)
     ax4 = apply_gmt_style_to_axis(ax4, grid=True, minor_ticks=True)
     
-    # レイアウトの自動調整 - ylabelがはみ出ないよう調整
-    plt.tight_layout(pad=1.5)  # パディングを追加してラベルの余裕を確保
+    # Final layout adjustment (skip if constrained already took care of it)
+    if not constrained:
+        pad = 1.1 if figsize[1] < 9 else 0.9
+        plt.tight_layout(pad=pad)
     
-    # 図の保存
-    plt.savefig(f"{save_path}.pdf", dpi=300, bbox_inches='tight')
-    plt.savefig(f"{save_path}.png", dpi=300, bbox_inches='tight')
+    # Save figure
+    # plt.savefig(f"{save_path}.pdf", dpi=300, bbox_inches='tight')
+    # plt.savefig(f"{save_path}.png", dpi=300, bbox_inches='tight')
     
     return fig
 
@@ -239,20 +235,18 @@ def create_nip_plot(tr_Z, tr_N, tr_E, Tv, Fv, Sv, nip, nip_mean, nip_eightyper,
 if __name__ == '__main__':
 
     
-    FIGURE_SIZE = (5, 14)    
+    FIGURE_SIZE = (6, 8)  # change here; adaptive spacing should prevent overlap
 
     polarization = 'retrograde'
-    Fs = 20.0 ### sampling frequency [Hz]
-    azimuth = 220.0 ### propagating direction of Rayleigh waves (crater->seismometer)
-    windL = 120.0 ### time window length [sec]
-    station = 'V.KIRA'
-    #starttime = datetime.datetime(2017,1,1,1,10,0)
-    starttime = datetime.datetime(2017,10,15,1,10,0)
+    Fs = 20.0  # sampling frequency [Hz]
+    azimuth = 220.0  # propagation azimuth of Rayleigh waves (crater -> station)
+    windL = 120.0  # time window length [s]
+    
+    stream_Z = obspy.read('sac/trZ.sac').resample(Fs, window='hann')
+    stream_N = obspy.read('sac/trN.sac').resample(Fs, window='hann')
+    stream_E = obspy.read('sac/trE.sac').resample(Fs, window='hann')
 
-    stream_Z = obspy.read('sac/'+starttime.strftime("%Y%m%d")+'/'+starttime.strftime("%Y%m%d%H")+'00'+station+'.U.sac').resample(Fs, window='hann')
-    stream_N = obspy.read('sac/'+starttime.strftime("%Y%m%d")+'/'+starttime.strftime("%Y%m%d%H")+'00'+station+'.N.sac').resample(Fs, window='hann')
-    stream_E = obspy.read('sac/'+starttime.strftime("%Y%m%d")+'/'+starttime.strftime("%Y%m%d%H")+'00'+station+'.E.sac').resample(Fs, window='hann')
-
+    starttime = stream_Z[0].stats.starttime
 
     stream_Z[0].data *= 1e-9
     stream_N[0].data *= 1e-9
@@ -282,15 +276,14 @@ if __name__ == '__main__':
     """
     Shift vertical component and Calculate NIP(t,f)
     """
-    Sv_shifted = filt_par.get_shift(polarization) * Sv
-    nip = filt_par.NIP(Sr, Sv_shifted)
-    nip_mean = np.nanmean(nip, axis=1) ### averege over time
-    nip_eightyper = np.percentile(nip, 80, axis=1) ### 80% percentile over time
+    nip = filt_par.NIP(Sr, Sv, polarization=polarization, eps=None)
+    nip_mean = np.nanmean(nip, axis=1)  # average over time
+    nip_eightyper = np.percentile(nip, 80, axis=1)  # 80th percentile over time
 
     """
-    Plot - 図のアスペクト比を柔軟に変更可能
+    Plot
     """
-    # 上で設定したFIGURE_SIZEを使用して図を作成
+
     fig = create_nip_plot(tr_Z, tr_N, tr_E, Tv, Fv, Sv, nip, nip_mean, nip_eightyper, windL, figsize=FIGURE_SIZE, save_path="example", cbar_width_ratio=0.3, main_width_ratio=7.0)
     
     
